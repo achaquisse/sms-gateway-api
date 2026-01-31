@@ -1,0 +1,304 @@
+package rest
+
+import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"sms-gateway-api/db"
+	"strings"
+	"testing"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+func setupTestApp() *fiber.App {
+	app := fiber.New()
+	app.Post("/messages", QueueSMSHandler)
+	app.Get("/messages", ListMessagesHandler)
+	return app
+}
+
+func setupTestDB(t *testing.T) {
+	config := db.Config{
+		Driver:   "sqlite",
+		Database: ":memory:",
+	}
+
+	if err := db.ConnectWithConfig(config); err != nil {
+		t.Fatalf("Failed to connect to test database: %v", err)
+	}
+
+	schemaPath := filepath.Join("..", "..", "db-schema.sql")
+	schemaBytes, err := os.ReadFile(schemaPath)
+	if err != nil {
+		t.Fatalf("Failed to read schema file: %v", err)
+	}
+
+	schema := string(schemaBytes)
+	schema = strings.ReplaceAll(schema, "SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT")
+
+	if _, err := db.GetDB().Exec(schema); err != nil {
+		t.Fatalf("Failed to initialize schema: %v", err)
+	}
+}
+
+func teardownTestDB() {
+	db.Close()
+}
+
+func TestQueueSMSHandler(t *testing.T) {
+	setupTestDB(t)
+	defer teardownTestDB()
+
+	app := setupTestApp()
+
+	tests := []struct {
+		name           string
+		payload        interface{}
+		expectedStatus int
+		checkResponse  func(t *testing.T, body []byte)
+	}{
+		{
+			name: "Valid request",
+			payload: QueueSMSRequest{
+				Topic:    "otp",
+				ToNumber: "+1234567890",
+				Body:     "Your OTP code is 123456",
+			},
+			expectedStatus: fiber.StatusCreated,
+			checkResponse: func(t *testing.T, body []byte) {
+				var response QueueSMSResponse
+				if err := json.Unmarshal(body, &response); err != nil {
+					t.Fatalf("Failed to unmarshal response: %v", err)
+				}
+				if response.Message != "Message queued successfully" {
+					t.Errorf("Expected message 'Message queued successfully', got '%s'", response.Message)
+				}
+				if response.ID == "" {
+					t.Error("Expected non-empty message ID")
+				}
+			},
+		},
+		{
+			name: "Missing topic",
+			payload: QueueSMSRequest{
+				ToNumber: "+1234567890",
+				Body:     "Your OTP code is 123456",
+			},
+			expectedStatus: fiber.StatusBadRequest,
+			checkResponse:  nil,
+		},
+		{
+			name: "Missing to_number",
+			payload: QueueSMSRequest{
+				Topic: "otp",
+				Body:  "Your OTP code is 123456",
+			},
+			expectedStatus: fiber.StatusBadRequest,
+			checkResponse:  nil,
+		},
+		{
+			name: "Missing body",
+			payload: QueueSMSRequest{
+				Topic:    "otp",
+				ToNumber: "+1234567890",
+			},
+			expectedStatus: fiber.StatusBadRequest,
+			checkResponse:  nil,
+		},
+		{
+			name:           "Invalid JSON",
+			payload:        "invalid json",
+			expectedStatus: fiber.StatusBadRequest,
+			checkResponse:  nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var bodyBytes []byte
+			var err error
+
+			if str, ok := tt.payload.(string); ok {
+				bodyBytes = []byte(str)
+			} else {
+				bodyBytes, err = json.Marshal(tt.payload)
+				if err != nil {
+					t.Fatalf("Failed to marshal payload: %v", err)
+				}
+			}
+
+			req := httptest.NewRequest("POST", "/messages", bytes.NewReader(bodyBytes))
+			req.Header.Set("Content-Type", "application/json")
+
+			resp, err := app.Test(req)
+			if err != nil {
+				t.Fatalf("Failed to perform request: %v", err)
+			}
+
+			if resp.StatusCode != tt.expectedStatus {
+				t.Errorf("Expected status %d, got %d", tt.expectedStatus, resp.StatusCode)
+			}
+
+			if tt.checkResponse != nil {
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					t.Fatalf("Failed to read response body: %v", err)
+				}
+				tt.checkResponse(t, body)
+			}
+		})
+	}
+}
+
+func TestListMessagesHandler(t *testing.T) {
+	setupTestDB(t)
+	defer teardownTestDB()
+
+	app := setupTestApp()
+
+	_, err := db.CreateMessage("otp", "+1234567890", "Your OTP is 123456")
+	if err != nil {
+		t.Fatalf("Failed to create test message: %v", err)
+	}
+
+	_, err = db.CreateMessage("alerts", "+9876543210", "Alert: Login detected")
+	if err != nil {
+		t.Fatalf("Failed to create test message: %v", err)
+	}
+
+	tests := []struct {
+		name           string
+		queryParams    string
+		expectedStatus int
+		checkResponse  func(t *testing.T, body []byte)
+	}{
+		{
+			name:           "List all messages",
+			queryParams:    "",
+			expectedStatus: fiber.StatusOK,
+			checkResponse: func(t *testing.T, body []byte) {
+				var response MessagesListResponse
+				if err := json.Unmarshal(body, &response); err != nil {
+					t.Fatalf("Failed to unmarshal response: %v", err)
+				}
+				if len(response.Data) != 2 {
+					t.Errorf("Expected 2 messages, got %d", len(response.Data))
+				}
+				if response.Pagination.Total != 2 {
+					t.Errorf("Expected total 2, got %d", response.Pagination.Total)
+				}
+			},
+		},
+		{
+			name:           "Filter by topic",
+			queryParams:    "?topic=otp",
+			expectedStatus: fiber.StatusOK,
+			checkResponse: func(t *testing.T, body []byte) {
+				var response MessagesListResponse
+				if err := json.Unmarshal(body, &response); err != nil {
+					t.Fatalf("Failed to unmarshal response: %v", err)
+				}
+				if len(response.Data) != 1 {
+					t.Errorf("Expected 1 message, got %d", len(response.Data))
+				}
+				if len(response.Data) > 0 && response.Data[0].Topic != "otp" {
+					t.Errorf("Expected topic 'otp', got '%s'", response.Data[0].Topic)
+				}
+			},
+		},
+		{
+			name:           "Filter by to_number",
+			queryParams:    "?to_number=%2B1234567890",
+			expectedStatus: fiber.StatusOK,
+			checkResponse: func(t *testing.T, body []byte) {
+				var response MessagesListResponse
+				if err := json.Unmarshal(body, &response); err != nil {
+					t.Fatalf("Failed to unmarshal response: %v", err)
+				}
+				if len(response.Data) != 1 {
+					t.Errorf("Expected 1 message, got %d", len(response.Data))
+				}
+			},
+		},
+		{
+			name:           "Filter by keyword",
+			queryParams:    "?keyword=OTP",
+			expectedStatus: fiber.StatusOK,
+			checkResponse: func(t *testing.T, body []byte) {
+				var response MessagesListResponse
+				if err := json.Unmarshal(body, &response); err != nil {
+					t.Fatalf("Failed to unmarshal response: %v", err)
+				}
+				if len(response.Data) != 1 {
+					t.Errorf("Expected 1 message, got %d", len(response.Data))
+				}
+			},
+		},
+		{
+			name:           "Filter by status",
+			queryParams:    "?status=pending",
+			expectedStatus: fiber.StatusOK,
+			checkResponse: func(t *testing.T, body []byte) {
+				var response MessagesListResponse
+				if err := json.Unmarshal(body, &response); err != nil {
+					t.Fatalf("Failed to unmarshal response: %v", err)
+				}
+				if len(response.Data) != 2 {
+					t.Errorf("Expected 2 pending messages, got %d", len(response.Data))
+				}
+			},
+		},
+		{
+			name:           "Invalid status",
+			queryParams:    "?status=invalid",
+			expectedStatus: fiber.StatusBadRequest,
+			checkResponse:  nil,
+		},
+		{
+			name:           "Pagination - page 1",
+			queryParams:    "?page=1&limit=1",
+			expectedStatus: fiber.StatusOK,
+			checkResponse: func(t *testing.T, body []byte) {
+				var response MessagesListResponse
+				if err := json.Unmarshal(body, &response); err != nil {
+					t.Fatalf("Failed to unmarshal response: %v", err)
+				}
+				if len(response.Data) != 1 {
+					t.Errorf("Expected 1 message per page, got %d", len(response.Data))
+				}
+				if response.Pagination.Page != 1 {
+					t.Errorf("Expected page 1, got %d", response.Pagination.Page)
+				}
+				if response.Pagination.TotalPages != 2 {
+					t.Errorf("Expected 2 total pages, got %d", response.Pagination.TotalPages)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/messages"+tt.queryParams, nil)
+			resp, err := app.Test(req)
+			if err != nil {
+				t.Fatalf("Failed to perform request: %v", err)
+			}
+
+			if resp.StatusCode != tt.expectedStatus {
+				t.Errorf("Expected status %d, got %d", tt.expectedStatus, resp.StatusCode)
+			}
+
+			if tt.checkResponse != nil {
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					t.Fatalf("Failed to read response body: %v", err)
+				}
+				tt.checkResponse(t, body)
+			}
+		})
+	}
+}

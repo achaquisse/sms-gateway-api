@@ -1,0 +1,686 @@
+openapi: 3.0.0
+info:
+  title: SMS Gateway API
+  version: 1.0.0
+  description: API for managing SMS gateway operations with topic-based routing
+
+servers:
+  - url: http://localhost:8080
+    description: Development server
+
+paths:
+  /messages:
+    post:
+      summary: Queue an SMS to a specific topic
+      description: Adds an SMS message to the queue for delivery via subscribed devices
+      tags:
+        - SMS
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueueSMSRequest'
+            example:
+              topic: "otp"
+              to_number: "+1234567890"
+              body: "Your OTP code is 123456"
+      responses:
+        '201':
+          description: Message queued successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueSMSResponse'
+              example:
+                message: "Message queued successfully"
+                id: "msg_123456789"
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      summary: List messages with filtering
+      description: Retrieve a list of messages with optional filters by topic, phone number, or body keyword
+      tags:
+        - SMS
+      parameters:
+        - name: topic
+          in: query
+          description: Filter by topic
+          schema:
+            type: string
+          example: "otp"
+        - name: to_number
+          in: query
+          description: Filter by recipient phone number
+          schema:
+            type: string
+          example: "+1234567890"
+        - name: keyword
+          in: query
+          description: Filter by keyword in message body
+          schema:
+            type: string
+          example: "OTP"
+        - name: status
+          in: query
+          description: Filter by message status
+          schema:
+            type: string
+            enum: [pending, sent, failed]
+          example: "sent"
+        - name: page
+          in: query
+          description: Page number for pagination
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          example: 1
+        - name: limit
+          in: query
+          description: Number of messages per page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          example: 20
+      responses:
+        '200':
+          description: List of messages
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessagesListResponse'
+              example:
+                data:
+                  - id: "msg_123"
+                    topic: "otp"
+                    to_number: "+1234567890"
+                    body: "Your OTP is 123456"
+                    status: "sent"
+                    created_at: "2026-01-29T04:30:00Z"
+                    sent_at: "2026-01-29T04:30:15Z"
+                  - id: "msg_124"
+                    topic: "alerts"
+                    to_number: "+9876543210"
+                    body: "Alert: Login detected"
+                    status: "failed"
+                    created_at: "2026-01-29T04:25:00Z"
+                    failed_at: "2026-01-29T04:25:10Z"
+                    failure_reason: "Invalid phone number"
+                pagination:
+                  page: 1
+                  limit: 20
+                  total: 45
+                  total_pages: 3
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /reports:
+    get:
+      summary: Get message statistics and reports
+      description: Retrieve message statistics grouped by status and topic for a date range with optional aggregation
+      tags:
+        - SMS
+      parameters:
+        - name: start_date
+          in: query
+          required: true
+          description: Start date for the report (ISO 8601 format)
+          schema:
+            type: string
+            format: date-time
+          example: "2026-01-01T00:00:00Z"
+        - name: end_date
+          in: query
+          required: true
+          description: End date for the report (ISO 8601 format)
+          schema:
+            type: string
+            format: date-time
+          example: "2026-01-31T23:59:59Z"
+        - name: aggregation
+          in: query
+          description: Aggregation period for the report
+          schema:
+            type: string
+            enum: [daily, weekly, monthly]
+            default: daily
+          example: "daily"
+        - name: topic
+          in: query
+          description: Filter report by specific topic
+          schema:
+            type: string
+          example: "otp"
+      responses:
+        '200':
+          description: Message statistics report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportResponse'
+              example:
+                period:
+                  start: "2026-01-01T00:00:00Z"
+                  end: "2026-01-31T23:59:59Z"
+                  aggregation: "daily"
+                summary:
+                  total: 1250
+                  sent: 1100
+                  failed: 50
+                  pending: 100
+                by_topic:
+                  - topic: "otp"
+                    total: 800
+                    sent: 750
+                    failed: 30
+                    pending: 20
+                  - topic: "alerts"
+                    total: 450
+                    sent: 350
+                    failed: 20
+                    pending: 80
+                timeline:
+                  - date: "2026-01-01"
+                    total: 45
+                    sent: 40
+                    failed: 2
+                    pending: 3
+                  - date: "2026-01-02"
+                    total: 52
+                    sent: 48
+                    failed: 3
+                    pending: 1
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /devices:
+    put:
+      summary: Update device topic subscriptions
+      description: Updates the list of topics this device listens to for SMS delivery
+      tags:
+        - Devices
+      security:
+        - DeviceKey: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceConfigRequest'
+            example:
+              topics: ["otp", "alerts"]
+      responses:
+        '200':
+          description: Configuration updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                message: "Device configuration updated"
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Invalid or missing device key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /gateway/poll:
+    get:
+      summary: Poll for pending messages
+      description: Device requests pending SMS messages from subscribed topics
+      tags:
+        - Gateway
+      security:
+        - DeviceKey: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceKey'
+      responses:
+        '200':
+          description: List of pending messages
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PollResponse'
+              example:
+                messages:
+                  - id: "msg_123"
+                    to_number: "+1234567890"
+                    body: "Your OTP is 123456"
+                  - id: "msg_124"
+                    to_number: "+9876543210"
+                    body: "Alert: Login detected"
+        '401':
+          description: Invalid or missing device key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /gateway/status/{messageId}:
+    put:
+      summary: Update message status
+      description: Device reports the delivery status of a message (sent/failed)
+      tags:
+        - Gateway
+      security:
+        - DeviceKey: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceKey'
+        - name: messageId
+          in: path
+          required: true
+          description: The ID of the message to update
+          schema:
+            type: string
+          example: "msg_123"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StatusUpdateRequest'
+            example:
+              status: "sent"
+              reason: null
+      responses:
+        '200':
+          description: Status updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                message: "Message status updated"
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Invalid or missing device key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Message not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  securitySchemes:
+    DeviceKey:
+      type: apiKey
+      in: header
+      name: X-Device-Key
+      description: Device authentication key
+
+  parameters:
+    DeviceKey:
+      name: X-Device-Key
+      in: header
+      required: true
+      description: Device authentication key
+      schema:
+        type: string
+      example: "device_abc123xyz"
+
+  schemas:
+    QueueSMSRequest:
+      type: object
+      required:
+        - topic
+        - to_number
+        - body
+      properties:
+        topic:
+          type: string
+          description: The channel/topic this message belongs to
+          example: "otp"
+        to_number:
+          type: string
+          description: The recipient phone number in E.164 format
+          example: "+1234567890"
+        body:
+          type: string
+          description: The SMS message content
+          example: "Your verification code is 123456"
+
+    QueueSMSResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          description: Success message
+        id:
+          type: string
+          description: Unique message identifier
+
+    DeviceConfigRequest:
+      type: object
+      required:
+        - topics
+      properties:
+        topics:
+          type: array
+          items:
+            type: string
+          description: List of topics this device should listen to
+          example: ["otp", "alerts"]
+
+    PollResponse:
+      type: object
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+          description: Array of pending messages for the device
+
+    Message:
+      type: object
+      required:
+        - id
+        - to_number
+        - body
+      properties:
+        id:
+          type: string
+          description: Unique message identifier
+          example: "msg_123456"
+        to_number:
+          type: string
+          description: Recipient phone number
+          example: "+1234567890"
+        body:
+          type: string
+          description: SMS message content
+          example: "Your OTP is 123456"
+
+    StatusUpdateRequest:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [sent, failed]
+          description: Message delivery status
+          example: "sent"
+        reason:
+          type: string
+          description: Failure reason if status is failed
+          example: "Invalid phone number"
+          nullable: true
+
+    SuccessResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          description: Success message
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error message
+          example: "Invalid request"
+        details:
+          type: string
+          description: Additional error details
+          example: "Missing required field: topic"
+
+    MessageDetail:
+      type: object
+      required:
+        - id
+        - topic
+        - to_number
+        - body
+        - status
+        - created_at
+      properties:
+        id:
+          type: string
+          description: Unique message identifier
+          example: "msg_123456"
+        topic:
+          type: string
+          description: Topic/channel the message belongs to
+          example: "otp"
+        to_number:
+          type: string
+          description: Recipient phone number
+          example: "+1234567890"
+        body:
+          type: string
+          description: SMS message content
+          example: "Your OTP is 123456"
+        status:
+          type: string
+          enum: [pending, sent, failed]
+          description: Current message status
+          example: "sent"
+        created_at:
+          type: string
+          format: date-time
+          description: Message creation timestamp
+          example: "2026-01-29T04:30:00Z"
+        sent_at:
+          type: string
+          format: date-time
+          description: Message sent timestamp
+          nullable: true
+          example: "2026-01-29T04:30:15Z"
+        failed_at:
+          type: string
+          format: date-time
+          description: Message failure timestamp
+          nullable: true
+          example: "2026-01-29T04:30:15Z"
+        failure_reason:
+          type: string
+          description: Reason for failure if status is failed
+          nullable: true
+          example: "Invalid phone number"
+
+    MessagesListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/MessageDetail'
+          description: Array of messages
+        pagination:
+          $ref: '#/components/schemas/PaginationInfo'
+
+    PaginationInfo:
+      type: object
+      properties:
+        page:
+          type: integer
+          description: Current page number
+          example: 1
+        limit:
+          type: integer
+          description: Number of items per page
+          example: 20
+        total:
+          type: integer
+          description: Total number of items
+          example: 45
+        total_pages:
+          type: integer
+          description: Total number of pages
+          example: 3
+
+    ReportResponse:
+      type: object
+      properties:
+        period:
+          $ref: '#/components/schemas/ReportPeriod'
+        summary:
+          $ref: '#/components/schemas/ReportSummary'
+        by_topic:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopicStats'
+          description: Statistics grouped by topic
+        timeline:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimelineEntry'
+          description: Time-series data based on aggregation period
+
+    ReportPeriod:
+      type: object
+      properties:
+        start:
+          type: string
+          format: date-time
+          description: Report start date
+          example: "2026-01-01T00:00:00Z"
+        end:
+          type: string
+          format: date-time
+          description: Report end date
+          example: "2026-01-31T23:59:59Z"
+        aggregation:
+          type: string
+          enum: [daily, weekly, monthly]
+          description: Aggregation period
+          example: "daily"
+
+    ReportSummary:
+      type: object
+      properties:
+        total:
+          type: integer
+          description: Total number of messages
+          example: 1250
+        sent:
+          type: integer
+          description: Number of sent messages
+          example: 1100
+        failed:
+          type: integer
+          description: Number of failed messages
+          example: 50
+        pending:
+          type: integer
+          description: Number of pending messages
+          example: 100
+
+    TopicStats:
+      type: object
+      properties:
+        topic:
+          type: string
+          description: Topic name
+          example: "otp"
+        total:
+          type: integer
+          description: Total messages for this topic
+          example: 800
+        sent:
+          type: integer
+          description: Sent messages for this topic
+          example: 750
+        failed:
+          type: integer
+          description: Failed messages for this topic
+          example: 30
+        pending:
+          type: integer
+          description: Pending messages for this topic
+          example: 20
+
+    TimelineEntry:
+      type: object
+      properties:
+        date:
+          type: string
+          description: Date or period identifier (format depends on aggregation)
+          example: "2026-01-01"
+        total:
+          type: integer
+          description: Total messages in this period
+          example: 45
+        sent:
+          type: integer
+          description: Sent messages in this period
+          example: 40
+        failed:
+          type: integer
+          description: Failed messages in this period
+          example: 2
+        pending:
+          type: integer
+          description: Pending messages in this period
+          example: 3
