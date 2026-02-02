@@ -5,10 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"sms-gateway-api/db"
-	"strings"
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
@@ -31,17 +28,8 @@ func setupGatewayTestDB(t *testing.T) {
 		t.Fatalf("Failed to connect to test database: %v", err)
 	}
 
-	schemaPath := filepath.Join("..", "..", "db-schema.sql")
-	schemaBytes, err := os.ReadFile(schemaPath)
-	if err != nil {
-		t.Fatalf("Failed to read schema file: %v", err)
-	}
-
-	schema := string(schemaBytes)
-	schema = strings.ReplaceAll(schema, "SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT")
-
-	if _, err := db.GetDB().Exec(schema); err != nil {
-		t.Fatalf("Failed to initialize schema: %v", err)
+	if err := db.RunMigrations(); err != nil {
+		t.Fatalf("Failed to run migrations: %v", err)
 	}
 }
 
@@ -51,11 +39,22 @@ func TestPollMessagesHandler(t *testing.T) {
 
 	app := setupGatewayTestApp()
 
-	device, _ := db.CreateDevice("test_device_key", nil)
-	db.SetDeviceTopics(device.ID, []string{"otp", "alerts"})
-	db.CreateMessage("otp", "+1234567890", "Your OTP is 123456")
-	db.CreateMessage("alerts", "+9876543210", "Alert: Login detected")
-	db.CreateMessage("notifications", "+1111111111", "Notification")
+	device, err := db.CreateDevice("test_device_key", nil)
+	if err != nil {
+		t.Fatalf("Failed to create test device: %v", err)
+	}
+	if err := db.SetDeviceTopics(device.ID, []string{"otp", "alerts"}); err != nil {
+		t.Fatalf("Failed to set device topics: %v", err)
+	}
+	if _, err := db.CreateMessage("otp", "+1234567890", "Your OTP is 123456"); err != nil {
+		t.Fatalf("Failed to create test message: %v", err)
+	}
+	if _, err := db.CreateMessage("alerts", "+9876543210", "Alert: Login detected"); err != nil {
+		t.Fatalf("Failed to create test message: %v", err)
+	}
+	if _, err := db.CreateMessage("notifications", "+1111111111", "Notification"); err != nil {
+		t.Fatalf("Failed to create test message: %v", err)
+	}
 
 	tests := []struct {
 		name           string
@@ -107,17 +106,18 @@ func TestPollMessagesHandler(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to perform request: %v", err)
 			}
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatalf("Failed to read response body: %v", err)
+			}
 
 			if resp.StatusCode != tt.expectedStatus {
-				body, _ := io.ReadAll(resp.Body)
 				t.Errorf("Expected status %d, got %d. Response: %s", tt.expectedStatus, resp.StatusCode, string(body))
 			}
 
 			if tt.checkResponse != nil {
-				body, err := io.ReadAll(resp.Body)
-				if err != nil {
-					t.Fatalf("Failed to read response body: %v", err)
-				}
 				tt.checkResponse(t, body)
 			}
 		})
@@ -130,8 +130,13 @@ func TestUpdateMessageStatusHandler(t *testing.T) {
 
 	app := setupGatewayTestApp()
 
-	_, _ = db.CreateDevice("test_device_key_status", nil)
-	msg, _ := db.CreateMessage("otp", "+1234567890", "Your OTP is 123456")
+	if _, err := db.CreateDevice("test_device_key_status", nil); err != nil {
+		t.Fatalf("Failed to create test device: %v", err)
+	}
+	msg, err := db.CreateMessage("otp", "+1234567890", "Your OTP is 123456")
+	if err != nil {
+		t.Fatalf("Failed to create test message: %v", err)
+	}
 
 	tests := []struct {
 		name           string
@@ -269,26 +274,24 @@ func TestUpdateMessageStatusHandler(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to perform request: %v", err)
 			}
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatalf("Failed to read response body: %v", err)
+			}
 
 			if resp.StatusCode != tt.expectedStatus {
-				body, _ := io.ReadAll(resp.Body)
 				t.Errorf("Expected status %d, got %d. Response: %s", tt.expectedStatus, resp.StatusCode, string(body))
 			}
 
 			if tt.checkResponse != nil {
-				resp.Body.Close()
-				req := httptest.NewRequest("PUT", "/gateway/status/"+tt.messageID, bytes.NewReader(bodyBytes))
-				req.Header.Set("Content-Type", "application/json")
-				if tt.deviceKey != "" {
-					req.Header.Set("X-Device-Key", tt.deviceKey)
-				}
-				resp, _ := app.Test(req)
-				body, err := io.ReadAll(resp.Body)
-				if err != nil {
-					t.Fatalf("Failed to read response body: %v", err)
-				}
 				tt.checkResponse(t, body)
 			}
 		})
 	}
+}
+
+func strPtr(s string) *string {
+	return &s
 }

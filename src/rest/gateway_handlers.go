@@ -1,10 +1,10 @@
 package rest
 
 import (
-	"database/sql"
 	"sms-gateway-api/db"
 
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 func PollMessagesHandler(c *fiber.Ctx) error {
@@ -99,7 +99,7 @@ func UpdateMessageStatusHandler(c *fiber.Ctx) error {
 	}
 
 	err = db.UpdateMessageStatus(messageID, req.Status, req.Reason)
-	if err == sql.ErrNoRows {
+	if err == gorm.ErrRecordNotFound {
 		return ReturnNotFound(c, "Message not found")
 	}
 	if err != nil {

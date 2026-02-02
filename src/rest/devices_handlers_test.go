@@ -5,10 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"sms-gateway-api/db"
-	"strings"
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
@@ -30,17 +27,8 @@ func setupDevicesTestDB(t *testing.T) {
 		t.Fatalf("Failed to connect to test database: %v", err)
 	}
 
-	schemaPath := filepath.Join("..", "..", "db-schema.sql")
-	schemaBytes, err := os.ReadFile(schemaPath)
-	if err != nil {
-		t.Fatalf("Failed to read schema file: %v", err)
-	}
-
-	schema := string(schemaBytes)
-	schema = strings.ReplaceAll(schema, "SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT")
-
-	if _, err := db.GetDB().Exec(schema); err != nil {
-		t.Fatalf("Failed to initialize schema: %v", err)
+	if err := db.RunMigrations(); err != nil {
+		t.Fatalf("Failed to run migrations: %v", err)
 	}
 }
 
@@ -105,7 +93,14 @@ func TestUpdateDeviceTopicsHandler(t *testing.T) {
 			},
 			expectedStatus: fiber.StatusOK,
 			checkResponse: func(t *testing.T, body []byte) {
-				device, _ := db.GetDeviceByKey("device_test_key_2")
+				device, err := db.GetDeviceByKey("device_test_key_2")
+				if err != nil {
+					t.Fatalf("Failed to get device: %v", err)
+				}
+				if device == nil {
+					t.Fatal("Expected device to exist")
+				}
+
 				topics, err := db.GetDeviceTopics(device.ID)
 				if err != nil {
 					t.Fatalf("Failed to get device topics: %v", err)
@@ -113,7 +108,7 @@ func TestUpdateDeviceTopicsHandler(t *testing.T) {
 				if len(topics) != 1 {
 					t.Errorf("Expected 1 topic, got %d", len(topics))
 				}
-				if topics[0] != "notifications" {
+				if len(topics) > 0 && topics[0] != "notifications" {
 					t.Errorf("Expected topic 'notifications', got '%s'", topics[0])
 				}
 			},
@@ -158,24 +153,18 @@ func TestUpdateDeviceTopicsHandler(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to perform request: %v", err)
 			}
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatalf("Failed to read response body: %v", err)
+			}
 
 			if resp.StatusCode != tt.expectedStatus {
-				body, _ := io.ReadAll(resp.Body)
 				t.Errorf("Expected status %d, got %d. Response: %s", tt.expectedStatus, resp.StatusCode, string(body))
 			}
 
 			if tt.checkResponse != nil {
-				resp.Body.Close()
-				req := httptest.NewRequest("PUT", "/devices", bytes.NewReader(bodyBytes))
-				req.Header.Set("Content-Type", "application/json")
-				if tt.deviceKey != "" {
-					req.Header.Set("X-Device-Key", tt.deviceKey)
-				}
-				resp, _ := app.Test(req)
-				body, err := io.ReadAll(resp.Body)
-				if err != nil {
-					t.Fatalf("Failed to read response body: %v", err)
-				}
 				tt.checkResponse(t, body)
 			}
 		})

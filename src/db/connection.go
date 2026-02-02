@@ -1,15 +1,16 @@
 package db
 
 import (
-	"database/sql"
 	"fmt"
 	"os"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
-	_ "modernc.org/sqlite"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
-var DB *sql.DB
+var DB *gorm.DB
 var currentDriver string
 
 type Config struct {
@@ -25,15 +26,15 @@ type Config struct {
 func GetConfigFromEnv() Config {
 	driver := os.Getenv("DB_DRIVER")
 	if driver == "" {
-		driver = "pgx"
+		driver = "mysql"
 	}
 
 	return Config{
 		Driver:   driver,
 		Host:     getEnvWithDefault("DB_HOST", "localhost"),
-		Port:     getEnvWithDefault("DB_PORT", "5432"),
-		User:     getEnvWithDefault("DB_USER", "postgres"),
-		Password: getEnvWithDefault("DB_PASSWORD", "postgres"),
+		Port:     getEnvWithDefault("DB_PORT", "3306"),
+		User:     getEnvWithDefault("DB_USER", "root"),
+		Password: getEnvWithDefault("DB_PASSWORD", "password"),
 		Database: getEnvWithDefault("DB_NAME", "sms_gateway"),
 		SSLMode:  getEnvWithDefault("DB_SSLMODE", "disable"),
 	}
@@ -53,32 +54,41 @@ func Connect() error {
 }
 
 func ConnectWithConfig(config Config) error {
-	var dsn string
+	var dialector gorm.Dialector
 	var err error
 
+	gormConfig := &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	}
+
 	if config.Driver == "sqlite" {
-		dsn = config.Database
+		dsn := config.Database
 		if dsn == "" {
 			dsn = ":memory:"
 		}
-	} else {
-		dsn = fmt.Sprintf(
-			"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-			config.Host, config.Port, config.User, config.Password, config.Database, config.SSLMode,
+		dialector = sqlite.Open(dsn)
+	} else if config.Driver == "mysql" {
+		dsn := fmt.Sprintf(
+			"%s:%s@tcp(%s:%s)/%s?parseTime=true&multiStatements=true",
+			config.User, config.Password, config.Host, config.Port, config.Database,
 		)
+		dialector = mysql.Open(dsn)
+	} else {
+		return fmt.Errorf("unsupported driver: %s", config.Driver)
 	}
 
-	DB, err = sql.Open(config.Driver, dsn)
+	DB, err = gorm.Open(dialector, gormConfig)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
 
-	if err = DB.Ping(); err != nil {
-		return fmt.Errorf("failed to ping database: %w", err)
+	sqlDB, err := DB.DB()
+	if err != nil {
+		return fmt.Errorf("failed to get sql.DB: %w", err)
 	}
 
-	DB.SetMaxOpenConns(25)
-	DB.SetMaxIdleConns(5)
+	sqlDB.SetMaxOpenConns(25)
+	sqlDB.SetMaxIdleConns(5)
 
 	currentDriver = config.Driver
 
@@ -87,12 +97,16 @@ func ConnectWithConfig(config Config) error {
 
 func Close() error {
 	if DB != nil {
-		return DB.Close()
+		sqlDB, err := DB.DB()
+		if err != nil {
+			return err
+		}
+		return sqlDB.Close()
 	}
 	return nil
 }
 
-func GetDB() *sql.DB {
+func GetDB() *gorm.DB {
 	return DB
 }
 

@@ -8,7 +8,7 @@ help:
 	@echo "  make docker-up    - Start Docker containers (database + app)"
 	@echo "  make docker-down  - Stop Docker containers"
 	@echo "  make docker-logs  - View Docker logs"
-	@echo "  make db-shell     - Connect to PostgreSQL shell"
+	@echo "  make db-shell     - Connect to MariaDB shell"
 	@echo "  make db-only      - Start only the database container"
 	@echo "  make clean        - Clean build artifacts"
 
@@ -34,7 +34,7 @@ db-only:
 	docker-compose up -d db
 
 db-shell:
-	docker exec -it sms-gateway-db psql -U postgres -d sms_gateway
+	docker exec -it sms-gateway-db mysql -uroot -ppassword sms_gateway
 
 clean:
 	rm -rf bin/

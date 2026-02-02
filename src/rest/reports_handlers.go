@@ -55,10 +55,10 @@ func GetReportsHandler(c *fiber.Ctx) error {
 	for i, ts := range topicStats {
 		restTopicStats[i] = TopicStats{
 			Topic:   ts.Topic,
-			Total:   ts.Total,
-			Sent:    ts.Sent,
-			Failed:  ts.Failed,
-			Pending: ts.Pending,
+			Total:   int(ts.Total),
+			Sent:    int(ts.Sent),
+			Failed:  int(ts.Failed),
+			Pending: int(ts.Pending),
 		}
 	}
 
@@ -66,10 +66,10 @@ func GetReportsHandler(c *fiber.Ctx) error {
 	for i, te := range timeline {
 		restTimeline[i] = TimelineEntry{
 			Date:    te.Date,
-			Total:   te.Total,
-			Sent:    te.Sent,
-			Failed:  te.Failed,
-			Pending: te.Pending,
+			Total:   int(te.Total),
+			Sent:    int(te.Sent),
+			Failed:  int(te.Failed),
+			Pending: int(te.Pending),
 		}
 	}
 
@@ -80,10 +80,10 @@ func GetReportsHandler(c *fiber.Ctx) error {
 			Aggregation: aggregation,
 		},
 		Summary: ReportSummary{
-			Total:   summary.Total,
-			Sent:    summary.Sent,
-			Failed:  summary.Failed,
-			Pending: summary.Pending,
+			Total:   int(summary.Total),
+			Sent:    int(summary.Sent),
+			Failed:  int(summary.Failed),
+			Pending: int(summary.Pending),
 		},
 		ByTopic:  restTopicStats,
 		Timeline: restTimeline,

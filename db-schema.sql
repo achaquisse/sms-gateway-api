@@ -1,10 +1,10 @@
 CREATE TABLE IF NOT EXISTS devices (
-    id SERIAL PRIMARY KEY,
+    id INT AUTO_INCREMENT PRIMARY KEY,
     device_key VARCHAR(255) UNIQUE NOT NULL,
     name VARCHAR(255),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    last_poll_at TIMESTAMP
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    last_poll_at TIMESTAMP NULL
 );
 
 CREATE INDEX idx_devices_device_key ON devices(device_key);
@@ -14,12 +14,14 @@ CREATE TABLE IF NOT EXISTS messages (
     topic VARCHAR(255) NOT NULL,
     to_number VARCHAR(20) NOT NULL,
     body TEXT NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed')),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    sent_at TIMESTAMP,
-    failed_at TIMESTAMP,
+    sent_at TIMESTAMP NULL,
+    failed_at TIMESTAMP NULL,
     failure_reason TEXT,
-    assigned_device_id INTEGER REFERENCES devices(id) ON DELETE SET NULL
+    assigned_device_id INT,
+    CONSTRAINT fk_messages_device FOREIGN KEY (assigned_device_id) REFERENCES devices(id) ON DELETE SET NULL,
+    CONSTRAINT chk_status CHECK (status IN ('pending', 'sent', 'failed'))
 );
 
 CREATE INDEX idx_messages_topic ON messages(topic);
@@ -30,10 +32,11 @@ CREATE INDEX idx_messages_assigned_device ON messages(assigned_device_id);
 CREATE INDEX idx_messages_topic_status ON messages(topic, status);
 
 CREATE TABLE IF NOT EXISTS device_topics (
-    id SERIAL PRIMARY KEY,
-    device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    device_id INT NOT NULL,
     topic VARCHAR(255) NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_device_topics_device FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE,
     UNIQUE(device_id, topic)
 );
 
@@ -41,7 +44,7 @@ CREATE INDEX idx_device_topics_device_id ON device_topics(device_id);
 CREATE INDEX idx_device_topics_topic ON device_topics(topic);
 
 CREATE TABLE IF NOT EXISTS schema_migrations (
-    version INTEGER PRIMARY KEY,
+    version INT PRIMARY KEY,
     applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

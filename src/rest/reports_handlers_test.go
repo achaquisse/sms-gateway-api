@@ -4,12 +4,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"sms-gateway-api/db"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -26,10 +22,20 @@ func TestGetReportsHandler(t *testing.T) {
 
 	app := setupReportsTestApp()
 
-	msg1, _ := db.CreateMessage("otp", "+1234567890", "Your OTP is 123456")
-	msg2, _ := db.CreateMessage("alerts", "+9876543210", "Alert: Login detected")
-	db.UpdateMessageStatus(msg1.ID, "sent", nil)
-	db.UpdateMessageStatus(msg2.ID, "failed", strPtr("Network error"))
+	msg1, err := db.CreateMessage("otp", "+1234567890", "Your OTP is 123456")
+	if err != nil {
+		t.Fatalf("Failed to create test message: %v", err)
+	}
+	msg2, err := db.CreateMessage("alerts", "+9876543210", "Alert: Login detected")
+	if err != nil {
+		t.Fatalf("Failed to create test message: %v", err)
+	}
+	if err := db.UpdateMessageStatus(msg1.ID, "sent", nil); err != nil {
+		t.Fatalf("Failed to update message status: %v", err)
+	}
+	if err := db.UpdateMessageStatus(msg2.ID, "failed", strPtr("Network error")); err != nil {
+		t.Fatalf("Failed to update message status: %v", err)
+	}
 
 	tests := []struct {
 		name           string
@@ -116,9 +122,11 @@ func TestGetReportsHandler(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to perform request: %v", err)
 			}
+			defer resp.Body.Close()
 
 			if resp.StatusCode != tt.expectedStatus {
-				t.Errorf("Expected status %d, got %d", tt.expectedStatus, resp.StatusCode)
+				body, _ := io.ReadAll(resp.Body)
+				t.Errorf("Expected status %d, got %d. Response: %s", tt.expectedStatus, resp.StatusCode, string(body))
 			}
 
 			if tt.checkResponse != nil {
@@ -130,36 +138,4 @@ func TestGetReportsHandler(t *testing.T) {
 			}
 		})
 	}
-}
-
-func setupTestDBForReports(t *testing.T) {
-	config := db.Config{
-		Driver:   "sqlite",
-		Database: ":memory:",
-	}
-
-	if err := db.ConnectWithConfig(config); err != nil {
-		t.Fatalf("Failed to connect to test database: %v", err)
-	}
-
-	schemaPath := filepath.Join("..", "..", "db-schema.sql")
-	schemaBytes, err := os.ReadFile(schemaPath)
-	if err != nil {
-		t.Fatalf("Failed to read schema file: %v", err)
-	}
-
-	schema := string(schemaBytes)
-	schema = strings.ReplaceAll(schema, "SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT")
-
-	if _, err := db.GetDB().Exec(schema); err != nil {
-		t.Fatalf("Failed to initialize schema: %v", err)
-	}
-}
-
-func strPtr(s string) *string {
-	return &s
-}
-
-func timePtr(t time.Time) *time.Time {
-	return &t
 }
