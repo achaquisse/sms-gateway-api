@@ -9,6 +9,9 @@ import (
 
 func ServeOpenAPISpec(c *fiber.Ctx) error {
 	specPath := "openapi.yml"
+	if _, err := os.Stat(specPath); os.IsNotExist(err) {
+		specPath = "/app/openapi.yml"
+	}
 
 	content, err := os.ReadFile(specPath)
 	if err != nil {
