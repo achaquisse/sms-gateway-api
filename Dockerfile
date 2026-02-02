@@ -17,6 +17,7 @@ WORKDIR /app
 
 COPY --from=builder /sms-gateway-api .
 COPY db-schema.sql /app/db-schema.sql
+COPY openapi.yml /app/openapi.yml
 
 EXPOSE 8080
 
