@@ -36,12 +36,3 @@ type MessagesListResponse struct {
 	Data       []MessageDetail `json:"data"`
 	Pagination PaginationInfo  `json:"pagination"`
 }
-
-type MessageFilters struct {
-	Topic    string
-	ToNumber string
-	Keyword  string
-	Status   string
-	Page     int
-	Limit    int
-}
