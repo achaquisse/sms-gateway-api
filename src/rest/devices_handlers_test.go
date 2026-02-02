@@ -13,6 +13,7 @@ import (
 
 func setupDevicesTestApp() *fiber.App {
 	app := fiber.New()
+	app.Get("/devices", GetDeviceTopicsHandler)
 	app.Put("/devices", UpdateDeviceTopicsHandler)
 	return app
 }
@@ -145,6 +146,124 @@ func TestUpdateDeviceTopicsHandler(t *testing.T) {
 
 			req := httptest.NewRequest("PUT", "/devices", bytes.NewReader(bodyBytes))
 			req.Header.Set("Content-Type", "application/json")
+			if tt.deviceKey != "" {
+				req.Header.Set("X-Device-Key", tt.deviceKey)
+			}
+
+			resp, err := app.Test(req)
+			if err != nil {
+				t.Fatalf("Failed to perform request: %v", err)
+			}
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatalf("Failed to read response body: %v", err)
+			}
+
+			if resp.StatusCode != tt.expectedStatus {
+				t.Errorf("Expected status %d, got %d. Response: %s", tt.expectedStatus, resp.StatusCode, string(body))
+			}
+
+			if tt.checkResponse != nil {
+				tt.checkResponse(t, body)
+			}
+		})
+	}
+}
+
+func TestGetDeviceTopicsHandler(t *testing.T) {
+	setupDevicesTestDB(t)
+	defer teardownTestDB()
+
+	app := setupDevicesTestApp()
+
+	device1, err := db.CreateDevice("device_get_test_1", nil)
+	if err != nil {
+		t.Fatalf("Failed to create test device: %v", err)
+	}
+	if err := db.SetDeviceTopics(device1.ID, []string{"otp", "alerts", "notifications"}); err != nil {
+		t.Fatalf("Failed to set device topics: %v", err)
+	}
+
+	_, err = db.CreateDevice("device_get_test_2", nil)
+	if err != nil {
+		t.Fatalf("Failed to create test device: %v", err)
+	}
+
+	tests := []struct {
+		name           string
+		deviceKey      string
+		expectedStatus int
+		checkResponse  func(t *testing.T, body []byte)
+	}{
+		{
+			name:           "Missing device key",
+			deviceKey:      "",
+			expectedStatus: fiber.StatusUnauthorized,
+			checkResponse: func(t *testing.T, body []byte) {
+				var response map[string]interface{}
+				if err := json.Unmarshal(body, &response); err != nil {
+					t.Fatalf("Failed to unmarshal response: %v", err)
+				}
+				if _, ok := response["error"]; !ok {
+					t.Error("Expected error field in response")
+				}
+			},
+		},
+		{
+			name:           "Invalid device key",
+			deviceKey:      "nonexistent_device_key",
+			expectedStatus: fiber.StatusUnauthorized,
+			checkResponse: func(t *testing.T, body []byte) {
+				var response map[string]interface{}
+				if err := json.Unmarshal(body, &response); err != nil {
+					t.Fatalf("Failed to unmarshal response: %v", err)
+				}
+				if _, ok := response["error"]; !ok {
+					t.Error("Expected error field in response")
+				}
+			},
+		},
+		{
+			name:           "Valid request - device with topics",
+			deviceKey:      "device_get_test_1",
+			expectedStatus: fiber.StatusOK,
+			checkResponse: func(t *testing.T, body []byte) {
+				var response DeviceConfigRequest
+				if err := json.Unmarshal(body, &response); err != nil {
+					t.Fatalf("Failed to unmarshal response: %v", err)
+				}
+				if len(response.Topics) != 3 {
+					t.Errorf("Expected 3 topics, got %d", len(response.Topics))
+				}
+				expectedTopics := map[string]bool{"otp": true, "alerts": true, "notifications": true}
+				for _, topic := range response.Topics {
+					if !expectedTopics[topic] {
+						t.Errorf("Unexpected topic: %s", topic)
+					}
+				}
+			},
+		},
+		{
+			name:           "Valid request - device without topics",
+			deviceKey:      "device_get_test_2",
+			expectedStatus: fiber.StatusOK,
+			checkResponse: func(t *testing.T, body []byte) {
+				var response DeviceConfigRequest
+				if err := json.Unmarshal(body, &response); err != nil {
+					t.Fatalf("Failed to unmarshal response: %v", err)
+				}
+				if len(response.Topics) != 0 {
+					t.Errorf("Expected 0 topics, got %d", len(response.Topics))
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/devices", nil)
 			if tt.deviceKey != "" {
 				req.Header.Set("X-Device-Key", tt.deviceKey)
 			}

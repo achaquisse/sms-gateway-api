@@ -12,6 +12,7 @@ func Init(app *fiber.App) {
 	app.Get("/messages", ListMessagesHandler)
 	app.Get("/reports", GetReportsHandler)
 
+	app.Get("/devices", GetDeviceTopicsHandler)
 	app.Put("/devices", UpdateDeviceTopicsHandler)
 
 	app.Get("/gateway/poll", PollMessagesHandler)

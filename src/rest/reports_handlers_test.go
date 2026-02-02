@@ -68,6 +68,23 @@ func TestGetReportsHandler(t *testing.T) {
 			checkResponse:  nil,
 		},
 		{
+			name:           "Valid request with simple date format",
+			queryParams:    "?start_date=2020-01-01&end_date=2030-12-31&aggregation=monthly",
+			expectedStatus: fiber.StatusOK,
+			checkResponse: func(t *testing.T, body []byte) {
+				var response ReportResponse
+				if err := json.Unmarshal(body, &response); err != nil {
+					t.Fatalf("Failed to unmarshal response: %v", err)
+				}
+				if response.Period.Aggregation != "monthly" {
+					t.Errorf("Expected aggregation 'monthly', got '%s'", response.Period.Aggregation)
+				}
+				if response.Summary.Total != 2 {
+					t.Errorf("Expected total 2, got %d", response.Summary.Total)
+				}
+			},
+		},
+		{
 			name:           "Valid request with daily aggregation",
 			queryParams:    "?start_date=2020-01-01T00:00:00Z&end_date=2030-12-31T23:59:59Z&aggregation=daily",
 			expectedStatus: fiber.StatusOK,

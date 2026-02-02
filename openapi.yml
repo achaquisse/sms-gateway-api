@@ -147,19 +147,29 @@ paths:
         - name: start_date
           in: query
           required: true
-          description: Start date for the report (ISO 8601 format)
+          description: Start date for the report (accepts date only YYYY-MM-DD or full ISO 8601 datetime)
           schema:
             type: string
-            format: date-time
-          example: "2026-01-01T00:00:00Z"
+          examples:
+            dateOnly:
+              value: "2026-01-01"
+              summary: Simple date format (defaults to 00:00:00 UTC)
+            dateTime:
+              value: "2026-01-01T00:00:00Z"
+              summary: Full ISO 8601 datetime format
         - name: end_date
           in: query
           required: true
-          description: End date for the report (ISO 8601 format)
+          description: End date for the report (accepts date only YYYY-MM-DD or full ISO 8601 datetime)
           schema:
             type: string
-            format: date-time
-          example: "2026-01-31T23:59:59Z"
+          examples:
+            dateOnly:
+              value: "2026-01-31"
+              summary: Simple date format (defaults to 23:59:59 UTC)
+            dateTime:
+              value: "2026-01-31T23:59:59Z"
+              summary: Full ISO 8601 datetime format
         - name: aggregation
           in: query
           description: Aggregation period for the report
@@ -227,6 +237,36 @@ paths:
                 $ref: '#/components/schemas/Error'
 
   /devices:
+    get:
+      summary: Get device topic subscriptions
+      description: Retrieves the list of topics this device is subscribed to
+      tags:
+        - Devices
+      security:
+        - DeviceKey: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceKey'
+      responses:
+        '200':
+          description: Device topic subscriptions retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceConfigRequest'
+              example:
+                topics: ["otp", "alerts"]
+        '401':
+          description: Invalid or missing device key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
     put:
       summary: Update device topic subscriptions
       description: Updates the list of topics this device listens to for SMS delivery

@@ -45,3 +45,34 @@ func UpdateDeviceTopicsHandler(c *fiber.Ctx) error {
 
 	return c.JSON(response)
 }
+
+func GetDeviceTopicsHandler(c *fiber.Ctx) error {
+	deviceKey := c.Get("X-Device-Key")
+	if deviceKey == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "Invalid or missing device key",
+		})
+	}
+
+	device, err := db.GetDeviceByKey(deviceKey)
+	if err != nil {
+		return ReturnInternalError(c, "Failed to authenticate device")
+	}
+
+	if device == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "Invalid or missing device key",
+		})
+	}
+
+	topics, err := db.GetDeviceTopics(device.ID)
+	if err != nil {
+		return ReturnInternalError(c, "Failed to retrieve device topics")
+	}
+
+	response := DeviceConfigRequest{
+		Topics: topics,
+	}
+
+	return c.JSON(response)
+}
