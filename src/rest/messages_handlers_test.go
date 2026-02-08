@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"io"
 	"net/http/httptest"
+	"os"
 	"sms-gateway-api/db"
 	"testing"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -293,4 +295,189 @@ func TestListMessagesHandler(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestQueueSMSHandler_Deduplication(t *testing.T) {
+	os.Setenv("DEDUPLICATION_INTERVAL_MINUTES", "1")
+	defer os.Unsetenv("DEDUPLICATION_INTERVAL_MINUTES")
+
+	setupTestDB(t)
+	defer teardownTestDB()
+
+	app := setupTestApp()
+
+	payload := QueueSMSRequest{
+		Topic:    "otp",
+		ToNumber: "+1234567890",
+		Body:     "Your OTP code is 123456",
+	}
+
+	t.Run("First message is queued successfully", func(t *testing.T) {
+		bodyBytes, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("Failed to marshal payload: %v", err)
+		}
+
+		req := httptest.NewRequest("POST", "/messages", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatalf("Failed to perform request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != fiber.StatusCreated {
+			body, _ := io.ReadAll(resp.Body)
+			t.Errorf("Expected status %d, got %d. Response: %s", fiber.StatusCreated, resp.StatusCode, string(body))
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("Failed to read response body: %v", err)
+		}
+
+		var response QueueSMSResponse
+		if err := json.Unmarshal(body, &response); err != nil {
+			t.Fatalf("Failed to unmarshal response: %v", err)
+		}
+
+		if response.Message != "Message queued successfully" {
+			t.Errorf("Expected message 'Message queued successfully', got '%s'", response.Message)
+		}
+		if response.ID == "" {
+			t.Error("Expected non-empty message ID")
+		}
+	})
+
+	t.Run("Duplicate message within interval is rejected", func(t *testing.T) {
+		bodyBytes, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("Failed to marshal payload: %v", err)
+		}
+
+		req := httptest.NewRequest("POST", "/messages", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatalf("Failed to perform request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != fiber.StatusConflict {
+			body, _ := io.ReadAll(resp.Body)
+			t.Errorf("Expected status %d, got %d. Response: %s", fiber.StatusConflict, resp.StatusCode, string(body))
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("Failed to read response body: %v", err)
+		}
+
+		var errorResponse map[string]interface{}
+		if err := json.Unmarshal(body, &errorResponse); err != nil {
+			t.Fatalf("Failed to unmarshal error response: %v", err)
+		}
+
+		if errorMsg, ok := errorResponse["error"].(string); ok {
+			if errorMsg == "" {
+				t.Error("Expected non-empty error message")
+			}
+		} else {
+			t.Error("Expected error field in response")
+		}
+	})
+
+	t.Run("Same message to different number is allowed", func(t *testing.T) {
+		differentPayload := QueueSMSRequest{
+			Topic:    "otp",
+			ToNumber: "+9876543210",
+			Body:     "Your OTP code is 123456",
+		}
+
+		bodyBytes, err := json.Marshal(differentPayload)
+		if err != nil {
+			t.Fatalf("Failed to marshal payload: %v", err)
+		}
+
+		req := httptest.NewRequest("POST", "/messages", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatalf("Failed to perform request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != fiber.StatusCreated {
+			body, _ := io.ReadAll(resp.Body)
+			t.Errorf("Expected status %d, got %d. Response: %s", fiber.StatusCreated, resp.StatusCode, string(body))
+		}
+	})
+
+	t.Run("Different message to same number is allowed", func(t *testing.T) {
+		differentPayload := QueueSMSRequest{
+			Topic:    "otp",
+			ToNumber: "+1234567890",
+			Body:     "Your OTP code is 654321",
+		}
+
+		bodyBytes, err := json.Marshal(differentPayload)
+		if err != nil {
+			t.Fatalf("Failed to marshal payload: %v", err)
+		}
+
+		req := httptest.NewRequest("POST", "/messages", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatalf("Failed to perform request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != fiber.StatusCreated {
+			body, _ := io.ReadAll(resp.Body)
+			t.Errorf("Expected status %d, got %d. Response: %s", fiber.StatusCreated, resp.StatusCode, string(body))
+		}
+	})
+
+	t.Run("Same message after interval expires is allowed", func(t *testing.T) {
+		setupTestDB(t)
+		defer teardownTestDB()
+
+		message, err := db.CreateMessage("otp", "+1111111111", "Test message")
+		if err != nil {
+			t.Fatalf("Failed to create initial message: %v", err)
+		}
+
+		oldTime := time.Now().Add(-2 * time.Minute)
+		db.GetDB().Model(&db.Message{}).Where("id = ?", message.ID).Update("created_at", oldTime)
+
+		samePayload := QueueSMSRequest{
+			Topic:    "otp",
+			ToNumber: "+1111111111",
+			Body:     "Test message",
+		}
+
+		bodyBytes, err := json.Marshal(samePayload)
+		if err != nil {
+			t.Fatalf("Failed to marshal payload: %v", err)
+		}
+
+		req := httptest.NewRequest("POST", "/messages", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatalf("Failed to perform request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != fiber.StatusCreated {
+			body, _ := io.ReadAll(resp.Body)
+			t.Errorf("Expected status %d, got %d. Response: %s", fiber.StatusCreated, resp.StatusCode, string(body))
+		}
+	})
 }

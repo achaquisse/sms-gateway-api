@@ -12,7 +12,13 @@ paths:
   /messages:
     post:
       summary: Queue an SMS to a specific topic
-      description: Adds an SMS message to the queue for delivery via subscribed devices
+      description: |
+        Adds an SMS message to the queue for delivery via subscribed devices.
+        
+        **Deduplication**: The API prevents duplicate messages from being sent to the same phone number within a configurable time interval (default: 3 days / 4320 minutes). 
+        If the same message body is sent to the same phone number within this interval, the request will be rejected with a 409 Conflict status.
+        
+        The deduplication interval can be configured via the `DEDUPLICATION_INTERVAL_MINUTES` environment variable.
       tags:
         - SMS
       requestBody:
@@ -41,6 +47,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '409':
+          description: Duplicate message detected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "duplicate message: same message was sent to +1234567890 within the deduplication interval"
         '500':
           description: Internal server error
           content:

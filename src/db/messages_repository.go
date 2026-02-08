@@ -2,6 +2,9 @@ package db
 
 import (
 	"fmt"
+	"os"
+	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -15,7 +18,42 @@ type MessageFilters struct {
 	Offset   int
 }
 
+func getDeduplicationInterval() time.Duration {
+	intervalStr := os.Getenv("DEDUPLICATION_INTERVAL_MINUTES")
+	if intervalStr == "" {
+		return 4320 * time.Minute
+	}
+
+	minutes, err := strconv.Atoi(intervalStr)
+	if err != nil || minutes < 0 {
+		return 4320 * time.Minute
+	}
+
+	return time.Duration(minutes) * time.Minute
+}
+
+func FindDuplicateMessage(toNumber, body string) (*Message, error) {
+	interval := getDeduplicationInterval()
+	cutoffTime := time.Now().Add(-interval)
+
+	var message Message
+	err := DB.Where("to_number = ? AND body = ? AND created_at > ?", toNumber, body, cutoffTime).
+		Order("created_at DESC").
+		First(&message).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &message, nil
+}
+
 func CreateMessage(topic, toNumber, body string) (*Message, error) {
+	existingMsg, err := FindDuplicateMessage(toNumber, body)
+	if err == nil && existingMsg != nil {
+		return nil, fmt.Errorf("duplicate message: same message was sent to %s within the deduplication interval", toNumber)
+	}
+
 	id := fmt.Sprintf("msg_%s", uuid.New().String()[:8])
 
 	message := &Message{

@@ -3,6 +3,7 @@ package rest
 import (
 	"math"
 	"sms-gateway-api/db"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -27,6 +28,11 @@ func QueueSMSHandler(c *fiber.Ctx) error {
 
 	message, err := db.CreateMessage(req.Topic, req.ToNumber, req.Body)
 	if err != nil {
+		if strings.Contains(err.Error(), "duplicate message") {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error": err.Error(),
+			})
+		}
 		return ReturnInternalError(c, "Failed to queue message")
 	}
 
